@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0b111e">
-    <title>ESP32 | Sensor Dashboard</title>
+    <title>IT73 | Sensor Dashboard</title>
     <style>
         :root {
             color-scheme: dark;
@@ -315,7 +315,6 @@
         <section aria-label="Current sensor readings">
             <div class="section-heading">
                 <h2>Live readings</h2>
-                <span class="section-note">Automatically updated every 3 seconds</span>
             </div>
 
             <div id="cards-wrap" class="sensor-grid">
@@ -439,7 +438,7 @@
 
         <section class="health-panel" aria-label="Sensor connection health">
             <div class="health-head">
-                <div><h2>Module health</h2><p>ESP32-reported sensor status. Digital signals cannot confirm a physical connection.</p></div>
+                <div><h2>Module health</h2><p>ESP32-reported sensor status. Digital signals will be marked unverified.</p></div>
                 <span class="health-tag">Diagnostics</span>
             </div>
             <div class="sensor-status" id="sensor-status-row" style="display:none;">
