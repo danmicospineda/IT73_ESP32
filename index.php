@@ -463,31 +463,58 @@
     </main>
 
     <script>
-        const POLL_INTERVAL = 3000; // Existing update interval remains unchanged.
+        const POLL_INTERVAL = 3000;
+        // Allow ordinary Wi-Fi / HTTP delays before calling the ESP32 inactive.
+        const ACTIVE_WINDOW_SECONDS = 30;
+        const OFFLINE_WINDOW_SECONDS = 90;
+        const READING_STORAGE_KEY = 'it73-esp32-last-readings-v1';
+        const READING_FIELDS = {
+            temperature: ['v-temp', ' °C'],
+            humidity: ['v-hum', ' %'],
+            rain_status: ['v-rain', ''],
+            motion: ['v-motion', ''],
+            distance: ['v-dist', ' cm'],
+            light: ['v-light', '']
+        };
+
+        let lastReadings = {};
+        let lastReadingModified = 0;
+        let polling = false;
+
+        // Keep the previous readings through a refresh, without changing ESP32_data.php.
+        try {
+            const saved = JSON.parse(localStorage.getItem(READING_STORAGE_KEY) || 'null');
+            if (saved && saved.readings && typeof saved.readings === 'object') {
+                for (const key of Object.keys(READING_FIELDS)) {
+                    if (saved.readings[key] !== null && saved.readings[key] !== undefined) {
+                        lastReadings[key] = saved.readings[key];
+                    }
+                }
+                lastReadingModified = Number(saved.lastModified) || 0;
+            }
+        } catch (err) {
+            // Private browsing/storage restrictions should not stop live readings.
+        }
+
+        function hasReadings() {
+            return Object.keys(lastReadings).length > 0;
+        }
 
         function setStatus(dotClass, text) {
-            const dot = document.getElementById('status-dot');
-            dot.className = 'dot ' + dotClass;
+            document.getElementById('status-dot').className = 'dot ' + dotClass;
             document.getElementById('status-text').textContent = text;
         }
 
-        // "Ready" represents an apparently valid sensor response, not proof of physical attachment.
-        // Digital-only sensors (rain/PIR/LM393) cannot confirm physical attachment
-        // using a 0/1 reading; for them, a true flag means "Unverified".
         function setSensorBadge(id, label, state) {
             const el = document.getElementById(id);
-            const classes = {
-                'Ready': 'ok',
-                'Offline': 'fail',
-                'Unverified': 'unknown',
-                'Stale': 'stale'
-            };
+            const classes = { Ready: 'ok', Offline: 'fail', Unverified: 'unknown', Stale: 'stale' };
             el.textContent = label;
             el.className = classes[state] || 'unknown';
             el.setAttribute('data-state', state);
             el.setAttribute('aria-label', label + ': ' + state);
         }
 
+        // A 0/1 digital output does not prove a module is connected.
         function sensorState(ok, deviceFresh, digitalOnly) {
             if (!deviceFresh) return 'Stale';
             if (ok !== true && ok !== false) return 'Unverified';
@@ -495,8 +522,21 @@
             return digitalOnly ? 'Unverified' : 'Ready';
         }
 
-        // These calculations affect visualization only; the original sensor values
-        // and the ESP32/system checks are not modified.
+        function showSensorStates(data, fresh) {
+            const sensors = [
+                ['s-dht', 'DHT11', data.dht_ok, false],
+                ['s-rain', 'Raindrop', data.rain_ok, true],
+                ['s-pir', 'PIR', data.pir_ok, true],
+                ['s-sonar', 'HC-SR04', data.sonar_ok, false],
+                ['s-light', 'LM393', data.light_ok, true]
+            ];
+            for (const [id, label, ok, digitalOnly] of sensors) {
+                setSensorBadge(id, label, sensorState(ok, fresh, digitalOnly));
+            }
+            document.getElementById('sensor-status-row').style.display = 'grid';
+            document.getElementById('health-waiting').style.display = 'none';
+        }
+
         function updateVisualization(data) {
             const temperature = Number(data.temperature);
             if (data.temperature !== null && data.temperature !== undefined && Number.isFinite(temperature)) {
@@ -512,7 +552,7 @@
             const humidityValid = data.humidity !== null && data.humidity !== undefined && Number.isFinite(humidity);
             const humidityValue = humidityValid ? Math.max(0, Math.min(100, humidity)) : 0;
             document.getElementById('humidity-bar').style.width = humidityValue + '%';
-            document.getElementById('humidity-track').setAttribute('aria-valuenow', humidityValid ? String(humidityValue) : '0');
+            document.getElementById('humidity-track').setAttribute('aria-valuenow', String(humidityValue));
             document.getElementById('humidity-track').setAttribute('aria-valuetext', humidityValid ? String(data.humidity) + ' percent' : 'Unavailable');
 
             const distance = Number(data.distance);
@@ -523,85 +563,108 @@
             document.getElementById('distance-track').setAttribute('aria-valuetext', distanceValid ? String(data.distance) + ' centimeters' : 'Unavailable');
         }
 
+        function renderReadings() {
+            if (!hasReadings()) return;
+            for (const [key, [id, unit]] of Object.entries(READING_FIELDS)) {
+                const value = lastReadings[key];
+                document.getElementById(id).textContent = value === undefined ? 'N/A' : String(value) + unit;
+            }
+            updateVisualization(lastReadings);
+        }
+
+        // This is the key distinction: an inactive ESP32 does not erase old readings.
+        function showReadingArea() {
+            const available = hasReadings();
+            document.getElementById('cards-wrap').style.display = available ? 'grid' : 'none';
+            document.getElementById('waiting-msg').style.display = available ? 'none' : 'grid';
+        }
+
+        function storeNewReadings(data) {
+            const modified = Number(data._last_modified) || Math.floor(Date.now() / 1000);
+            // A late/out-of-order server response must not replace newer cached data.
+            if (modified < lastReadingModified) return;
+            let changed = false;
+            for (const key of Object.keys(READING_FIELDS)) {
+                if (data[key] !== null && data[key] !== undefined) {
+                    lastReadings[key] = data[key];
+                    changed = true;
+                }
+            }
+            if (!changed) return; // Warning-only POSTs have no reading fields.
+            lastReadingModified = modified;
+            try {
+                localStorage.setItem(READING_STORAGE_KEY, JSON.stringify({
+                    readings: lastReadings, lastModified: lastReadingModified
+                }));
+            } catch (err) {
+                // The live page still retains values if browser storage is unavailable.
+            }
+            renderReadings();
+        }
+
+        function showNoReadingMessage(title, detail) {
+            document.querySelector('#waiting-msg strong').textContent = title;
+            document.querySelector('#waiting-msg p').textContent = detail;
+            showReadingArea();
+        }
+
         async function poll() {
+            if (polling) return;
+            polling = true;
             try {
                 const res = await fetch('ESP32_data.php', { cache: 'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
-
                 document.getElementById('refresh-time').textContent = new Date().toLocaleString();
 
                 if (data.error) {
                     setStatus('offline', data.error === 'No data yet' ? 'No Data Received' : data.error);
-                    document.getElementById('sensor-status-row').style.display = 'none';
-                    document.getElementById('health-waiting').style.display = 'block';
                     document.getElementById('warning-banner').style.display = 'none';
-                    document.getElementById('cards-wrap').style.display = 'none';
-                    document.getElementById('waiting-msg').style.display = 'grid';
+                    if (hasReadings()) showSensorStates({}, false);
+                    else {
+                        document.getElementById('sensor-status-row').style.display = 'none';
+                        document.getElementById('health-waiting').style.display = 'block';
+                    }
+                    showNoReadingMessage('Waiting for ESP32 data', 'Sensor readings will appear here once your device sends data.');
                     return;
                 }
 
-                const secondsAgo = Math.floor(Date.now() / 1000) - (data._last_modified || 0);
-                let dotClass, statusText;
-                if (secondsAgo <= 15) {
-                    dotClass = 'online'; statusText = 'ESP32 Connected';
-                } else if (secondsAgo <= 60) {
-                    dotClass = 'stale'; statusText = `ESP32 Possibly Disconnected (${secondsAgo}s ago)`;
+                const modified = Number(data._last_modified) || 0;
+                const secondsAgo = modified > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - modified) : Infinity;
+                const fresh = secondsAgo <= ACTIVE_WINDOW_SECONDS;
+                if (fresh) setStatus('online', 'ESP32 Connected');
+                else if (secondsAgo <= OFFLINE_WINDOW_SECONDS) {
+                    setStatus('stale', 'ESP32 Possibly Disconnected (' + secondsAgo + 's ago)');
                 } else {
-                    dotClass = 'offline'; statusText = `ESP32 Offline (${secondsAgo}s ago)`;
-                }
-                setStatus(dotClass, statusText);
-
-                document.getElementById('sensor-status-row').style.display = 'grid';
-                document.getElementById('health-waiting').style.display = 'none';
-                const fresh = secondsAgo >= 0 && secondsAgo <= 15;
-                setSensorBadge('s-dht',   'DHT11',    sensorState(data.dht_ok,   fresh, false));
-                setSensorBadge('s-rain',  'Raindrop', sensorState(data.rain_ok,  fresh, true));
-                setSensorBadge('s-pir',   'PIR',      sensorState(data.pir_ok,   fresh, true));
-                setSensorBadge('s-sonar', 'HC-SR04',  sensorState(data.sonar_ok, fresh, false));
-                setSensorBadge('s-light', 'LM393',    sensorState(data.light_ok, fresh, true));
-
-                document.querySelector('#waiting-msg strong').textContent = 'Waiting for ESP32 data';
-                document.querySelector('#waiting-msg p').textContent = 'Sensor readings will appear here once your device sends data.';
-                document.getElementById('waiting-msg').style.display = 'none';
-
-                // Do not show historical values as live when the device is stale.
-                if (!fresh) {
-                    document.getElementById('cards-wrap').style.display = 'none';
-                    document.getElementById('warning-banner').style.display = 'none';
-                    document.getElementById('waiting-msg').style.display = 'grid';
-                    document.querySelector('#waiting-msg strong').textContent = 'ESP32 telemetry is stale';
-                    document.querySelector('#waiting-msg p').textContent = 'Waiting for a new update from the device.';
-                    return;
+                    setStatus('offline', 'ESP32 Offline (' + secondsAgo + 's ago)');
                 }
 
-                if (data.system_ok !== true) {
-                    document.getElementById('warning-banner').style.display = 'block';
-                    document.getElementById('missing-list').textContent = data.missing || '';
-                    document.getElementById('cards-wrap').style.display = 'none';
+                showSensorStates(data, fresh);
+                storeNewReadings(data);
+
+                // Show a current sensor-check warning, but keep reading cards visible.
+                const failedCheck = fresh && data.system_ok === false;
+                document.getElementById('warning-banner').style.display = failedCheck ? 'block' : 'none';
+                if (failedCheck) document.getElementById('missing-list').textContent = data.missing || 'Unknown sensor';
+
+                if (fresh) {
+                    showNoReadingMessage('Waiting for valid sensor readings', 'The ESP32 is reporting data, but no complete readings are available yet.');
                 } else {
-                    document.getElementById('warning-banner').style.display = 'none';
-                    document.getElementById('cards-wrap').style.display = 'grid';
-
-                    document.getElementById('v-temp').textContent   = (data.temperature  ?? 'N/A') + ' °C';
-                    document.getElementById('v-hum').textContent    = (data.humidity     ?? 'N/A') + ' %';
-                    document.getElementById('v-rain').textContent   = (data.rain_status  ?? 'N/A');
-                    document.getElementById('v-motion').textContent = (data.motion       ?? 'N/A');
-                    document.getElementById('v-dist').textContent   = (data.distance     ?? 'N/A') + ' cm';
-                    document.getElementById('v-light').textContent  = (data.light        ?? 'N/A');
-                    updateVisualization(data);
+                    // A stale placeholder is useful ONLY if there is no saved reading to show.
+                    showNoReadingMessage('ESP32 telemetry is stale', 'No recent device update. Waiting for sensor readings.');
                 }
-
             } catch (err) {
                 setStatus('offline', 'Connection error');
-                document.getElementById('sensor-status-row').style.display = 'none';
-                document.getElementById('health-waiting').style.display = 'block';
-                document.getElementById('health-waiting').textContent = 'Sensor status unavailable — dashboard could not retrieve data.';
                 document.getElementById('warning-banner').style.display = 'none';
-                document.getElementById('cards-wrap').style.display = 'none';
-                document.getElementById('waiting-msg').style.display = 'grid';
+                if (hasReadings()) showSensorStates({}, false);
+                showNoReadingMessage('Waiting for ESP32 data', 'Unable to retrieve new readings from the server.');
+            } finally {
+                polling = false;
             }
         }
 
+        renderReadings();
+        showReadingArea();
         poll();
         setInterval(poll, POLL_INTERVAL);
     </script>
