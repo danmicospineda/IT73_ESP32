@@ -290,11 +290,7 @@
             <div>
                 <div class="eyebrow">Device telemetry</div>
                 <h1>Sensor overview</h1>
-                <p class="intro">Real-time readings and connection health from your ESP32 system.</p>
-            </div>
-            <div class="overview-aside" aria-label="Five sensor modules">
-                <span class="metric-count">05</span>
-                <span class="metric-count-label">sensor<br>modules</span>
+                <p class="intro">Real-time readings and connection health from the ESP32.</p>
             </div>
         </section>
 
