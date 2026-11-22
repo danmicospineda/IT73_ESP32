@@ -346,7 +346,6 @@
                                 <span class="progress-fill" id="humidity-bar"></span>
                             </div>
                             <div class="progress-axis"><span>0%</span><span>100%</span></div>
-                            <p class="detail-note">Two readings from one sensor module.</p>
                         </div>
                     </div>
                 </article>
@@ -440,7 +439,7 @@
 
         <section class="health-panel" aria-label="Sensor connection health">
             <div class="health-head">
-                <div><h2>Module health</h2><p>Reported sensor health. Digital outputs alone cannot verify a physical connection.</p></div>
+                <div><h2>Module health</h2><p>ESP32-reported sensor status. Digital signals cannot confirm a physical connection.</p></div>
                 <span class="health-tag">Diagnostics</span>
             </div>
             <div class="sensor-status" id="sensor-status-row" style="display:none;">
@@ -514,24 +513,26 @@
             el.setAttribute('aria-label', label + ': ' + state);
         }
 
-        // A 0/1 digital output does not prove a module is connected.
-        function sensorState(ok, deviceFresh, digitalOnly) {
+        // Reflect the ESP32-reported health flags. For digital-only sensors,
+        // "Ready" means the firmware reports OK, NOT verified physical presence.
+        // A simple HIGH/LOW read cannot detect a disconnected module reliably.
+        function sensorState(ok, deviceFresh) {
             if (!deviceFresh) return 'Stale';
-            if (ok !== true && ok !== false) return 'Unverified';
+            if (ok === true) return 'Ready';
             if (ok === false) return 'Offline';
-            return digitalOnly ? 'Unverified' : 'Ready';
+            return 'Unverified';
         }
 
         function showSensorStates(data, fresh) {
             const sensors = [
-                ['s-dht', 'DHT11', data.dht_ok, false],
-                ['s-rain', 'Raindrop', data.rain_ok, true],
-                ['s-pir', 'PIR', data.pir_ok, true],
-                ['s-sonar', 'HC-SR04', data.sonar_ok, false],
-                ['s-light', 'LM393', data.light_ok, true]
+                ['s-dht', 'DHT11', data.dht_ok],
+                ['s-rain', 'Raindrop', data.rain_ok],
+                ['s-pir', 'PIR', data.pir_ok],
+                ['s-sonar', 'HC-SR04', data.sonar_ok],
+                ['s-light', 'LM393', data.light_ok]
             ];
-            for (const [id, label, ok, digitalOnly] of sensors) {
-                setSensorBadge(id, label, sensorState(ok, fresh, digitalOnly));
+            for (const [id, label, ok] of sensors) {
+                setSensorBadge(id, label, sensorState(ok, fresh));
             }
             document.getElementById('sensor-status-row').style.display = 'grid';
             document.getElementById('health-waiting').style.display = 'none';
