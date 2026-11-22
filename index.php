@@ -336,7 +336,7 @@
                                     <div class="large-reading" id="v-temp">--</div>
                                 </div>
                             </div>
-                            <div class="dial-scale"><span>0°C</span><span>50°C</span></div>
+                            <div class="dial-scale"><span>0°C</span><span>100°C</span></div>
                         </div>
                         <div class="humidity-area">
                             <span class="kicker">Relative humidity</span>
