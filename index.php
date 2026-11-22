@@ -188,11 +188,8 @@
         .sensor-status span::before { content: ""; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
         .sensor-status span.ok::before { color: var(--accent); }
         .sensor-status span.fail::before { color: var(--danger); }
-        .sensor-status span.unknown::before { color: var(--warning); }
-        .sensor-status span.stale::before { color: var(--muted); }
         .sensor-status span::after { content: attr(data-state); color: var(--muted); font-size: 10px; font-weight: 500; margin-left: auto; }
         .sensor-status span.fail::after { color: var(--danger); }
-        .sensor-status span.unknown::after { color: var(--warning); }
 
         .warning-banner {
             background: rgba(104, 36, 51, .22); border: 1px solid rgba(255, 119, 133, .36);
@@ -303,10 +300,10 @@
                     <path d="M10.3 3.6 2.2 17.5A2 2 0 0 0 4 20.5h16a2 2 0 0 0 1.8-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>
                 </svg>
                 <div>
-                    <h2>System halted — sensor check failed</h2>
+                    <h2>System halted — sensor disconnected</h2>
                     <div class="missing">
                         Missing: <strong id="missing-list"></strong><br>
-                        A failed check may mean a missing sensor, a wiring issue, or an invalid reading.
+                        All five sensors must be connected for the system to operate.
                     </div>
                 </div>
             </div>
@@ -440,7 +437,7 @@
 
         <section class="health-panel" aria-label="Sensor connection health">
             <div class="health-head">
-                <div><h2>Module health</h2><p>Reported sensor health. Digital outputs alone cannot verify a physical connection.</p></div>
+                <div><h2>Module health</h2><p>Connection checks for all five physical sensors.</p></div>
                 <span class="health-tag">Diagnostics</span>
             </div>
             <div class="sensor-status" id="sensor-status-row" style="display:none;">
@@ -471,28 +468,12 @@
             document.getElementById('status-text').textContent = text;
         }
 
-        // "Ready" represents an apparently valid sensor response, not proof of physical attachment.
-        // Digital-only sensors (rain/PIR/LM393) cannot confirm physical attachment
-        // using a 0/1 reading; for them, a true flag means "Unverified".
-        function setSensorBadge(id, label, state) {
+        function setSensorBadge(id, label, ok) {
             const el = document.getElementById(id);
-            const classes = {
-                'Ready': 'ok',
-                'Offline': 'fail',
-                'Unverified': 'unknown',
-                'Stale': 'stale'
-            };
             el.textContent = label;
-            el.className = classes[state] || 'unknown';
-            el.setAttribute('data-state', state);
-            el.setAttribute('aria-label', label + ': ' + state);
-        }
-
-        function sensorState(ok, deviceFresh, digitalOnly) {
-            if (!deviceFresh) return 'Stale';
-            if (ok !== true && ok !== false) return 'Unverified';
-            if (ok === false) return 'Offline';
-            return digitalOnly ? 'Unverified' : 'Ready';
+            el.className = ok ? 'ok' : 'fail';
+            el.setAttribute('data-state', ok ? 'Ready' : 'Offline');
+            el.setAttribute('aria-label', label + ': ' + (ok ? 'Ready' : 'Offline'));
         }
 
         // These calculations affect visualization only; the original sensor values
@@ -553,26 +534,13 @@
 
                 document.getElementById('sensor-status-row').style.display = 'grid';
                 document.getElementById('health-waiting').style.display = 'none';
-                const fresh = secondsAgo >= 0 && secondsAgo <= 15;
-                setSensorBadge('s-dht',   'DHT11',    sensorState(data.dht_ok,   fresh, false));
-                setSensorBadge('s-rain',  'Raindrop', sensorState(data.rain_ok,  fresh, true));
-                setSensorBadge('s-pir',   'PIR',      sensorState(data.pir_ok,   fresh, true));
-                setSensorBadge('s-sonar', 'HC-SR04',  sensorState(data.sonar_ok, fresh, false));
-                setSensorBadge('s-light', 'LM393',    sensorState(data.light_ok, fresh, true));
+                setSensorBadge('s-dht',   'DHT11',    data.dht_ok   === true);
+                setSensorBadge('s-rain',  'Raindrop', data.rain_ok  === true);
+                setSensorBadge('s-pir',   'PIR',      data.pir_ok   === true);
+                setSensorBadge('s-sonar', 'HC-SR04',  data.sonar_ok === true);
+                setSensorBadge('s-light', 'LM393',    data.light_ok === true);
 
-                document.querySelector('#waiting-msg strong').textContent = 'Waiting for ESP32 data';
-                document.querySelector('#waiting-msg p').textContent = 'Sensor readings will appear here once your device sends data.';
                 document.getElementById('waiting-msg').style.display = 'none';
-
-                // Do not show historical values as live when the device is stale.
-                if (!fresh) {
-                    document.getElementById('cards-wrap').style.display = 'none';
-                    document.getElementById('warning-banner').style.display = 'none';
-                    document.getElementById('waiting-msg').style.display = 'grid';
-                    document.querySelector('#waiting-msg strong').textContent = 'ESP32 telemetry is stale';
-                    document.querySelector('#waiting-msg p').textContent = 'Waiting for a new update from the device.';
-                    return;
-                }
 
                 if (data.system_ok !== true) {
                     document.getElementById('warning-banner').style.display = 'block';
@@ -593,12 +561,6 @@
 
             } catch (err) {
                 setStatus('offline', 'Connection error');
-                document.getElementById('sensor-status-row').style.display = 'none';
-                document.getElementById('health-waiting').style.display = 'block';
-                document.getElementById('health-waiting').textContent = 'Sensor status unavailable — dashboard could not retrieve data.';
-                document.getElementById('warning-banner').style.display = 'none';
-                document.getElementById('cards-wrap').style.display = 'none';
-                document.getElementById('waiting-msg').style.display = 'grid';
             }
         }
 
