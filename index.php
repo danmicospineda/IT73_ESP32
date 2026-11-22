@@ -506,7 +506,7 @@
 
         async function poll() {
             try {
-                const res = await fetch('sensor_data.php', { cache: 'no-store' });
+                const res = await fetch('ESP32_data.php', { cache: 'no-store' });
                 const data = await res.json();
 
                 document.getElementById('refresh-time').textContent = new Date().toLocaleString();
